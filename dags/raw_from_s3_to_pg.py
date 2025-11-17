@@ -8,6 +8,12 @@ from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 from airflow.sensors.external_task import ExternalTaskSensor
 
+from airflow.sensors.python import PythonSensor
+from airflow.models import DagRun
+from airflow.utils.state import DagRunState
+from airflow.utils.session import provide_session
+from datetime import datetime
+
 # Конфигурация DAG
 OWNER = "mylenalll"
 DAG_ID = "raw_from_s3_to_pg"
@@ -39,11 +45,6 @@ args = {
     "retry_delay": pendulum.duration(hours=1),
 }
 
-from airflow.sensors.python import PythonSensor
-from airflow.models import DagRun
-from airflow.utils.state import DagRunState
-from airflow.utils.session import provide_session
-from datetime import datetime
 
 @provide_session
 def was_raw_dag_success_today(session=None, **kwargs):
