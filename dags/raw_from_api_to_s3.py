@@ -34,9 +34,18 @@ args = {
 }
 
 def get_dates(**context) -> tuple[str, str]:
-    """"""
-    start_date = context["data_interval_start"].format("YYYY-MM-DD")
-    end_date = context["data_interval_end"].format("YYYY-MM-DD")
+    """
+    Возвращает start_date и end_date в формате YYYY-MM-DD.
+    Если переданы вручную start_date и end_date, использует их,
+    иначе берёт из контекста Airflow.
+    """
+    start_date = context.get("manual_start_date")
+    end_date = context.get("manual_end_date")
+
+    if start_date is None:
+        start_date = context["data_interval_start"].format("YYYY-MM-DD")
+    if end_date is None:
+        end_date = context["data_interval_end"].format("YYYY-MM-DD")
 
     return start_date, end_date
 
@@ -93,6 +102,11 @@ with DAG(
     get_and_transfer_api_data_to_s3 = PythonOperator(
         task_id="get_and_transfer_api_data_to_s3",
         python_callable=get_and_transfer_api_data_to_s3,
+        # Раскомментировать чтобы передать даты вручную
+        # op_kwargs={
+        #     "manual_start_date": "2025-11-17",
+        #     "manual_end_date": "2025-11-17",
+        # },
     )
 
     end = EmptyOperator(
