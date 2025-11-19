@@ -220,10 +220,10 @@ with DAG(
         task_id="get_and_transfer_raw_data_to_ods_pg",
         python_callable=get_and_transfer_raw_data_to_ods_pg,      
         # Раскомментировать чтобы передать даты вручную
-        # op_kwargs={
-        #     "manual_start_date": "2025-11-01",
-        #     "manual_end_date": "2025-11-02",
-        # },
+        op_kwargs={
+            "manual_start_date": "2025-11-01",
+            "manual_end_date": "2025-11-19",
+        },
     )
 
     end = EmptyOperator(
