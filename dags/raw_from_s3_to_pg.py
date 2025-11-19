@@ -6,7 +6,6 @@ from airflow import DAG
 from airflow.models import Variable
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
-from airflow.sensors.external_task import ExternalTaskSensor
 
 from airflow.sensors.python import PythonSensor
 from airflow.models import DagRun
@@ -62,20 +61,36 @@ def was_raw_dag_success_today(session=None, **kwargs):
     return any(run.execution_date.date() == today for run in runs)
 
 def get_dates(**context) -> tuple[str, str]:
-    """"""
-    start_date = context["data_interval_start"].format("YYYY-MM-DD")
-    end_date = context["data_interval_end"].format("YYYY-MM-DD")
+    """
+    Возвращает start_date и end_date в формате YYYY-MM-DD.
+    Если переданы вручную start_date и end_date, использует их,
+    иначе берёт из контекста Airflow.
+    """
+    start_date = context.get("manual_start_date")
+    end_date = context.get("manual_end_date")
+
+    if start_date is None:
+        start_date = context["data_interval_start"].format("YYYY-MM-DD")
+    if end_date is None:
+        end_date = context["data_interval_end"].format("YYYY-MM-DD")
 
     return start_date, end_date
 
 
-def get_and_transfer_raw_data_to_ods_pg(**context):
-    """"""
+from datetime import datetime, timedelta
 
-    start_date, end_date = get_dates(**context)
-    logging.info(f"💻 Start load for dates: {start_date}/{end_date}")
+def get_and_transfer_raw_data_to_ods_pg(**context):
+    start_date_str, end_date_str = get_dates(**context)
+
+    # Convert to datetime objects
+    start_dt = datetime.strptime(start_date_str, "%Y-%m-%d")
+    end_dt = datetime.strptime(end_date_str, "%Y-%m-%d")
+
+    logging.info(f"💻 Start load for dates from {start_date_str} to {end_date_str}")
+
     con = duckdb.connect()
 
+    # Configure DuckDB once
     con.sql(
         f"""
         SET TIMEZONE='UTC';
@@ -97,62 +112,85 @@ def get_and_transfer_raw_data_to_ods_pg(**context):
         );
 
         ATTACH '' AS dwh_postgres_db (TYPE postgres, SECRET dwh_postgres);
-
-        INSERT INTO dwh_postgres_db.{SCHEMA}.{TARGET_TABLE}
-        (
-            time,
-            latitude,
-            longitude,
-            depth,
-            mag,
-            mag_type,
-            nst,
-            gap,
-            dmin,
-            rms,
-            net,
-            id,
-            updated,
-            place,
-            type,
-            horizontal_error,
-            depth_error,
-            mag_error,
-            mag_nst,
-            status,
-            location_source,
-            mag_source
-        )
-        SELECT
-            time,
-            latitude,
-            longitude,
-            depth,
-            mag,
-            magType AS mag_type,
-            nst,
-            gap,
-            dmin,
-            rms,
-            net,
-            id,
-            updated,
-            place,
-            type,
-            horizontalError AS horizontal_error,
-            depthError AS depth_error,
-            magError AS mag_error,
-            magNst AS mag_nst,
-            status,
-            locationSource AS location_source,
-            magSource AS mag_source
-        FROM 's3://prod/{LAYER}/{SOURCE}/{start_date}/{start_date}_00-00-00.gz.parquet';
-        """,
+        """
     )
 
-    con.close()
-    logging.info(f"✅ Download for date success: {start_date}")
+    # Loop through each day
+    current_dt = start_dt
+    while current_dt <= end_dt:
+        day = current_dt.strftime("%Y-%m-%d")
+        parquet_path = f"s3://prod/{LAYER}/{SOURCE}/{day}/{day}_00-00-00.gz.parquet"
 
+        logging.info(f"📥 Loading {parquet_path}")
+
+        con.sql(
+            f"""
+            DELETE FROM dwh_postgres_db.{SCHEMA}.{TARGET_TABLE}
+            WHERE time::date = '{day}'
+            ;
+            """
+        )
+
+        con.sql(
+            f"""
+            INSERT INTO dwh_postgres_db.{SCHEMA}.{TARGET_TABLE}
+            (
+                time,
+                latitude,
+                longitude,
+                depth,
+                mag,
+                mag_type,
+                nst,
+                gap,
+                dmin,
+                rms,
+                net,
+                id,
+                updated,
+                place,
+                type,
+                horizontal_error,
+                depth_error,
+                mag_error,
+                mag_nst,
+                status,
+                location_source,
+                mag_source
+            )
+            SELECT
+                time,
+                latitude,
+                longitude,
+                depth,
+                mag,
+                magType AS mag_type,
+                nst,
+                gap,
+                dmin,
+                rms,
+                net,
+                id,
+                updated,
+                place,
+                type,
+                horizontalError AS horizontal_error,
+                depthError AS depth_error,
+                magError AS mag_error,
+                magNst AS mag_nst,
+                status,
+                locationSource AS location_source,
+                magSource AS mag_source
+            FROM '{parquet_path}';
+            """
+        )
+
+        logging.info(f"✅ Successfully loaded: {day}")
+
+        current_dt += timedelta(days=1)
+
+    con.close()
+    logging.info(f"🎉 Finished loading all dates from {start_date_str} to {end_date_str}")
 
 with DAG(
     dag_id=DAG_ID,
@@ -170,17 +208,6 @@ with DAG(
         task_id="start",
     )
 
-    # sensor_on_raw_layer = ExternalTaskSensor(
-    #     task_id="sensor_on_raw_layer",
-    #     external_dag_id="raw_from_api_to_s3",
-    #     external_task_id=None,
-    #     allowed_states=["success"],
-    #     mode="reschedule",
-    #     timeout=360000,  # длительность работы сенсора
-    #     poke_interval=60,  # частота проверки
-    #     execution_delta=None,
-    # )
-
     sensor_on_raw_layer = PythonSensor(
         task_id="sensor_on_raw_layer",
         python_callable=was_raw_dag_success_today,
@@ -191,7 +218,12 @@ with DAG(
 
     get_and_transfer_raw_data_to_ods_pg = PythonOperator(
         task_id="get_and_transfer_raw_data_to_ods_pg",
-        python_callable=get_and_transfer_raw_data_to_ods_pg,
+        python_callable=get_and_transfer_raw_data_to_ods_pg,      
+        # Раскомментировать чтобы передать даты вручную
+        # op_kwargs={
+        #     "manual_start_date": "2025-11-01",
+        #     "manual_end_date": "2025-11-02",
+        # },
     )
 
     end = EmptyOperator(
