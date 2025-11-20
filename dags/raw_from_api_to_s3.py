@@ -52,15 +52,10 @@ def get_dates(**context) -> tuple[str, str]:
 
 
 def get_and_transfer_api_data_to_s3(**context):
+    """"""
 
-    start_date_str, end_date_str = get_dates(**context)
-
-    # Convert to datetime objects
-    start_dt = datetime.strptime(start_date_str, "%Y-%m-%d")
-    end_dt = datetime.strptime(end_date_str, "%Y-%m-%d")
-
-    logging.info(f"💻 Start load for dates from {start_date_str} to {end_date_str}")
-
+    start_date, end_date = get_dates(**context)
+    logging.info(f"💻 Start load for dates: {start_date}/{end_date}")
     con = duckdb.connect()
 
     con.sql(
@@ -73,32 +68,20 @@ def get_and_transfer_api_data_to_s3(**context):
         SET s3_access_key_id = '{ACCESS_KEY}';
         SET s3_secret_access_key = '{SECRET_KEY}';
         SET s3_use_ssl = FALSE;
-    """,
+
+        COPY
+        (
+            SELECT
+                *
+            FROM
+                read_csv_auto('https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&starttime={start_date}&endtime={end_date}') AS res
+        ) TO 's3://prod/{LAYER}/{SOURCE}/{start_date}/{start_date}_00-00-00.gz.parquet';
+
+        """,
     )
 
-    # Loop through each day
-    current_dt = start_dt
-    while current_dt <= end_dt:
-        day = current_dt.strftime("%Y-%m-%d")
-
-        con.sql(
-            f"""
-            COPY
-            (
-                SELECT
-                    *
-                FROM
-                    read_csv_auto("https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&starttime={day}&endtime={day}") AS res
-            ) TO 's3://prod/{LAYER}/{SOURCE}/{day}/{day}_00-00-00.gz.parquet';
-
-            """,
-        )
-
-        logging.info(f"✅ Successfully loaded: {day}")
-
-        current_dt += timedelta(days=1)
     con.close()
-    logging.info(f"🎉 Finished loading all dates from {start_date_str} to {end_date_str}")
+    logging.info(f"✅ Download for date success: {start_date}")
 
 
 with DAG(
