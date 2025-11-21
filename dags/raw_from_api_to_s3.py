@@ -55,8 +55,18 @@ def get_and_transfer_api_data_to_s3(**context):
     """"""
 
     start_date, end_date = get_dates(**context)
+    start_date = start_date.strip().replace("'", "").replace('"', "")
+    end_date = end_date.strip().replace("'", "").replace('"', "")
+
     logging.info(f"💻 Start load for dates: {start_date}/{end_date}")
+
     con = duckdb.connect()
+
+    url = (
+        f'https://earthquake.usgs.gov/fdsnws/event/1/query'
+        f'?format=csv&starttime={start_date}&endtime={end_date}'
+    )
+    logging.info(f"URL: {url}")
 
     con.sql(
         f"""
@@ -74,14 +84,14 @@ def get_and_transfer_api_data_to_s3(**context):
             SELECT
                 *
             FROM
-                read_csv_auto('https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&starttime={start_date}&endtime={end_date}') AS res
+                read_csv_auto('{url}') AS res
         ) TO 's3://prod/{LAYER}/{SOURCE}/{start_date}/{start_date}_00-00-00.gz.parquet';
 
         """,
     )
 
     con.close()
-    logging.info(f"✅ Download for date success: {start_date}")
+    logging.info(f"✅ Download for dates success: {start_date} to {end_date}")
 
 
 with DAG(

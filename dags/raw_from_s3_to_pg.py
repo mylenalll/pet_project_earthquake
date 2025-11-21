@@ -58,7 +58,7 @@ def was_raw_dag_success_today(session=None, **kwargs):
         .all()
     )
 
-    return any(run.execution_date.date() == today for run in runs)
+    return any(run.start_date.date() == today for run in runs)
 
 def get_dates(**context) -> tuple[str, str]:
     """
@@ -119,9 +119,24 @@ def get_and_transfer_raw_data_to_ods_pg(**context):
     current_dt = start_dt
     while current_dt <= end_dt:
         day = current_dt.strftime("%Y-%m-%d")
-        parquet_path = f"s3://prod/{LAYER}/{SOURCE}/{day}/{day}_00-00-00.gz.parquet"
+        parent_path = f"s3://prod/{LAYER}/{SOURCE}/{day}/"
+        file_name = f"{day}_00-00-00.gz.parquet"
 
-        logging.info(f"📥 Loading {parquet_path}")
+        try:
+            files = con.sql(f"SELECT name FROM list('{parent_path}')").fetchall()
+        except Exception as e:
+            logging.warning(f"⚠️ Could not list S3 folder for {day}: {e}. Skipping.")
+            current_dt += timedelta(days=1)
+            continue
+
+        exists = any(row[0] == file_name for row in files)
+
+        if not exists:
+            logging.warning(f"⚠️ File not found: {parent_path}{file_name}. Skipping.")
+            current_dt += timedelta(days=1)
+            continue
+
+        logging.info(f"📄 Found parquet for {day}. Loading into Postgres...")
 
         con.sql(
             f"""
@@ -181,7 +196,7 @@ def get_and_transfer_raw_data_to_ods_pg(**context):
                 status,
                 locationSource AS location_source,
                 magSource AS mag_source
-            FROM '{parquet_path}';
+            FROM '{parent_path}{file_name}';
             """
         )
 
@@ -220,10 +235,10 @@ with DAG(
         task_id="get_and_transfer_raw_data_to_ods_pg",
         python_callable=get_and_transfer_raw_data_to_ods_pg,      
         # Раскомментировать чтобы передать даты вручную
-        op_kwargs={
-            "manual_start_date": "2025-11-01",
-            "manual_end_date": "2025-11-19",
-        },
+        # op_kwargs={
+        #     "manual_start_date": "2025-11-01",
+        #     "manual_end_date": "2025-11-19",
+        # },
     )
 
     end = EmptyOperator(
