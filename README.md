@@ -10,9 +10,12 @@ ETL-пайплайн для данных о землетрясениях: дан
 
 #### ✈️ Apache Airflow
 - Таски
-- Операторы
-- Сенсоры
-- Зависимости между DAG-ами
+- Операторы (SQLExecuteQueryOperator, PythonOperator)
+- Сенсоры (PythonSensor, ExternalTaskSensor)
+- Идемпотентность DAG-а
+
+#### Концепции
+- Слои хранилища данных (raw, ODS, DM)
 
 ## Запуск
 
